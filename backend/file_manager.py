@@ -3,13 +3,10 @@ import shutil
 from pathlib import Path
 from typing import List, Optional, Dict
 import mimetypes
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 
 class FileManager:
-    """
-    Manages files in a single shared directory and tracks metadata in a JSON file.
-    """
     def __init__(self, base_upload_dir: str = "uploads"):
         self.base_dir = Path(base_upload_dir)
         self.base_dir.mkdir(exist_ok=True)
@@ -30,24 +27,20 @@ class FileManager:
             json.dump(self.metadata, f, indent=4)
 
     def _is_supported_for_preview(self, filename: str) -> bool:
-        """Checks if the file type is supported for preview."""
-        # You can customize this list based on your requirements
         return filename.lower().endswith(('.c', '.jpg', '.jpeg', '.py', '.png', '.txt'))
 
     def save_file(self, username: str, file_content: bytes, filename: str) -> bool:
         try:
             file_path = self.base_dir / filename
-            
             with open(file_path, 'wb') as f:
                 f.write(file_content)
 
-            now = datetime.now().isoformat()
+            # Use timezone-aware UTC for all timestamps
+            now = datetime.now(timezone.utc).isoformat()
             if filename in self.metadata:
-                # File exists, update modification info
                 self.metadata[filename]['last_modified_by'] = username
                 self.metadata[filename]['modified_at'] = now
             else:
-                # New file, create metadata
                 self.metadata[filename] = {
                     'uploaded_by': username,
                     'last_modified_by': username,
@@ -64,7 +57,6 @@ class FileManager:
     def delete_file(self, filename: str) -> bool:
         try:
             file_path = self.base_dir / filename
-            
             if file_path.exists():
                 file_path.unlink()
                 if filename in self.metadata:
@@ -98,12 +90,16 @@ class FileManager:
                 stat = file_path.stat()
                 file_meta = self.metadata.get(file_path.name, {})
                 
+                # Use creation time from file system stat as a fallback
+                created_at_utc = datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc).isoformat()
+                modified_at_utc = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+
                 files.append({
-                    'id': file_path.name, # Using filename as ID
+                    'id': file_path.name,
                     'name': file_path.name,
                     'size': stat.st_size,
-                    'created_at': file_meta.get('created_at', datetime.fromtimestamp(stat.st_ctime).isoformat()),
-                    'modified_at': file_meta.get('modified_at', datetime.fromtimestamp(stat.st_mtime).isoformat()),
+                    'created_at': file_meta.get('created_at', created_at_utc),
+                    'modified_at': file_meta.get('modified_at', modified_at_utc),
                     'uploaded_by': file_meta.get('uploaded_by', 'unknown'),
                     'last_modified_by': file_meta.get('last_modified_by', 'unknown'),
                     'file_type': mimetypes.guess_type(str(file_path))[0] or 'unknown',
