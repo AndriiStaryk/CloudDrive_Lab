@@ -1,238 +1,278 @@
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Query
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from datetime import datetime
+from typing import List, Optional
 import os
 import shutil
-from datetime import datetime, timedelta
-from typing import List, Optional
+import hashlib
+import jwt
+from pathlib import Path
+import mimetypes
+from enum import Enum
 
-from fastapi import Depends, FastAPI, HTTPException, status, UploadFile, File
-from fastapi.responses import FileResponse
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jose import JWTError, jwt
-from passlib.context import CryptContext
+app = FastAPI(title="Cloud Drive API", description="Simplified Google Drive Clone")
 
-# Import the models we defined in models.py
-from models import User, UserInDB, Token, TokenData, FileMetadata
+# CORS для веб-клієнта
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # React dev server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# --- Configuration & Setup ---
+# Конфігурація
+SECRET_KEY = "your-secret-key-here"
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
 
-# This is for hashing passwords. In a real app, this would be more complex.
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-# Secret key to sign JWTs. In a real app, load this from an environment variable!
-SECRET_KEY = "YOUR_SECRET_KEY_NEEDS_TO_BE_CHANGED"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-UPLOADS_DIR = "uploads"
+security = HTTPBearer()
 
-# Ensure the uploads directory exists
-os.makedirs(UPLOADS_DIR, exist_ok=True)
+# Моделі даних
+class UserSignup(BaseModel):
+    username: str
+    password: str
 
-# --- In-Memory Database (for demonstration) ---
-# NOTE: This data is lost when the server restarts.
+class User(BaseModel):
+    username: str
+    password: str
 
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+class FileInfo(BaseModel):
+    id: str
+    name: str
+    size: int
+    created_at: datetime
+    modified_at: datetime
+    uploaded_by: str
+    last_modified_by: str
+    file_type: str
+    is_supported_for_preview: bool
+
+class SortOrder(str, Enum):
+    ASC = "asc"
+    DESC = "desc"
+
+class FileFilter(str, Enum):
+    ALL = "all"
+    PY_JPG = "py_jpg"
+
+# Тимчасова "база даних" користувачів (в реальному проекті - PostgreSQL/MongoDB)
 fake_users_db = {
-    "john": {
-        "username": "john",
-        "full_name": "John Doe",
-        "email": "john.doe@example.com",
-        "hashed_password": pwd_context.hash("secret"), # Hashing the password "secret"
-        "disabled": False,
-    }
+    "user1": {"username": "user1", "password": "password1"},
+    "user2": {"username": "user2", "password": "password2"},
 }
 
-# We'll use a list of dictionaries to act as our file metadata DB
-fake_files_db: List[dict] = [
-    {
-        "id": 1,
-        "name": "example_document.c",
-        "creation_date": datetime.now() - timedelta(days=2),
-        "modification_date": datetime.now() - timedelta(days=1),
-        "uploader_username": "john",
-        "last_editor_username": "john",
-        "file_type": "c",
-    },
-    {
-        "id": 2,
-        "name": "photo_of_cat.jpg",
-        "creation_date": datetime.now() - timedelta(hours=5),
-        "modification_date": datetime.now() - timedelta(hours=2),
-        "uploader_username": "john",
-        "last_editor_username": "john",
-        "file_type": "jpg",
-    }
-]
+# Функції аутентифікації
+def verify_password(password: str, hashed_password: str) -> bool:
+    return hashlib.sha256(password.encode()).hexdigest() == hashed_password
 
-# --- Authentication Helpers ---
+def get_password_hash(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
-
-def get_user(db, username: str):
-    if username in db:
-        user_dict = db[username]
-        return UserInDB(**user_dict)
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-async def get_current_user(token: str = Depends(oauth2_scheme)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        token_data = TokenData(username=username)
-    except JWTError:
-        raise credentials_exception
-    user = get_user(fake_users_db, username=token_data.username)
-    if user is None:
-        raise credentials_exception
+def authenticate_user(username: str, password: str):
+    user = fake_users_db.get(username)
+    if not user or not verify_password(password, get_password_hash(user["password"])):
+        return False
     return user
 
-async def get_current_active_user(current_user: User = Depends(get_current_user)):
-    if current_user.disabled:
-        raise HTTPException(status_code=400, detail="Inactive user")
-    return current_user
+def create_user(username: str, password: str) -> bool:
+    """Створити нового користувача"""
+    if username in fake_users_db:
+        return False  # Користувач вже існує
+    
+    fake_users_db[username] = {
+        "username": username,
+        "password": password  # В реальності треба хешувати
+    }
+    return True
 
-# --- FastAPI App Instance ---
-app = FastAPI()
+def create_access_token(data: dict):
+    return jwt.encode(data, SECRET_KEY, algorithm="HS256")
 
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    try:
+        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=["HS256"])
+        username = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return username
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
-# --- API Endpoints ---
+def get_user_dir(username: str) -> Path:
+    """Отримати директорію користувача"""
+    user_dir = UPLOAD_DIR / username
+    user_dir.mkdir(exist_ok=True)
+    return user_dir
 
-@app.post("/token", response_model=Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    """
-    Takes username and password and returns an access token.
-    """
-    user = get_user(fake_users_db, form_data.username)
-    if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
+def is_supported_file_type(filename: str) -> bool:
+    """Перевірити чи файл підтримується для перегляду (.c, .jpg згідно варіанту)"""
+    return filename.lower().endswith(('.c', '.jpg', '.jpeg'))
+
+def get_file_info(file_path: Path, username: str) -> FileInfo:
+    """Отримати інформацію про файл"""
+    stat = file_path.stat()
+    
+    return FileInfo(
+        id=str(hash(str(file_path))),
+        name=file_path.name,
+        size=stat.st_size,
+        created_at=datetime.fromtimestamp(stat.st_ctime),
+        modified_at=datetime.fromtimestamp(stat.st_mtime),
+        uploaded_by=username,  # В реальності треба зберігати в БД
+        last_modified_by=username,  # В реальності треба зберігати в БД
+        file_type=mimetypes.guess_type(str(file_path))[0] or "unknown",
+        is_supported_for_preview=is_supported_file_type(file_path.name)
     )
-    return {"access_token": access_token, "token_type": "bearer"}
 
+# API ендпоінти
 
-@app.get("/files", response_model=List[FileMetadata])
-async def get_files_list(
-    sort_by: Optional[str] = None,
-    filter_by: Optional[str] = None,
-    current_user: User = Depends(get_current_active_user)
+@app.post("/auth/signup", response_model=LoginResponse)
+async def signup(user: UserSignup):
+    """Реєстрація нового користувача"""
+    # Перевіряємо чи користувач вже існує
+    if user.username in fake_users_db:
+        raise HTTPException(
+            status_code=400, 
+            detail="Username already exists"
+        )
+    
+    # Базова валідація
+    if len(user.username.strip()) < 3:
+        raise HTTPException(
+            status_code=400,
+            detail="Username must be at least 3 characters long"
+        )
+    
+    if len(user.password) < 6:
+        raise HTTPException(
+            status_code=400,
+            detail="Password must be at least 6 characters long"
+        )
+    
+    # Створюємо користувача
+    if create_user(user.username.strip(), user.password):
+        # Автоматично логінимо після реєстрації
+        access_token = create_access_token(data={"sub": user.username.strip()})
+        return LoginResponse(access_token=access_token)
+    else:
+        raise HTTPException(status_code=500, detail="Failed to create user")
+
+@app.post("/auth/login", response_model=LoginResponse)
+async def login(user: User):
+    """Авторизація користувача"""
+    if not authenticate_user(user.username, user.password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    access_token = create_access_token(data={"sub": user.username})
+    return LoginResponse(access_token=access_token)
+
+@app.get("/files", response_model=List[FileInfo])
+async def get_files(
+    current_user: str = Depends(get_current_user),
+    sort_by_uploader: Optional[SortOrder] = None,
+    filter_type: FileFilter = FileFilter.ALL
 ):
-    """
-    Returns a list of file metadata.
-    Supports filtering by file type and sorting by uploader username.
-    """
-    # In a real app, you'd filter/sort this at the database level.
-    files = list(fake_files_db)
-
-    if filter_by:
-        # Filter for files with a specific extension (e.g., "py", "jpg")
-        files = [f for f in files if f["name"].lower().endswith(f".{filter_by.lower()}")]
-
-    if sort_by == "uploader_username":
-        files = sorted(files, key=lambda f: f["uploader_username"])
-
+    """Отримати список файлів користувача з сортуванням та фільтрацією"""
+    user_dir = get_user_dir(current_user)
+    files = []
+    
+    for file_path in user_dir.iterdir():
+        if file_path.is_file():
+            file_info = get_file_info(file_path, current_user)
+            
+            # Фільтрація згідно варіанту (всі файли або тільки .py, .jpg)
+            if filter_type == FileFilter.PY_JPG:
+                if not file_path.name.lower().endswith(('.py', '.jpg', '.jpeg')):
+                    continue
+            
+            files.append(file_info)
+    
+    # Сортування за ім'ям того, хто завантажив (згідно варіанту)
+    if sort_by_uploader:
+        reverse = sort_by_uploader == SortOrder.DESC
+        files.sort(key=lambda x: x.uploaded_by, reverse=reverse)
+    
     return files
 
-
-@app.post("/files/upload", response_model=FileMetadata, status_code=status.HTTP_201_CREATED)
+@app.post("/files/upload")
 async def upload_file(
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_active_user)
+    current_user: str = Depends(get_current_user)
 ):
-    """
-    Uploads a file to the server.
-    """
-    file_path = os.path.join(UPLOADS_DIR, file.filename)
-
-    # Save the file to the 'uploads' directory
-    try:
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-    finally:
-        file.file.close()
-
-    # Create metadata and add it to our fake DB
-    new_id = max(f["id"] for f in fake_files_db) + 1 if fake_files_db else 1
-    file_type = file.filename.split('.')[-1] if '.' in file.filename else ''
+    """Завантажити файл"""
+    user_dir = get_user_dir(current_user)
+    file_path = user_dir / file.filename
     
-    new_file_metadata = {
-        "id": new_id,
-        "name": file.filename,
-        "creation_date": datetime.now(),
-        "modification_date": datetime.now(),
-        "uploader_username": current_user.username,
-        "last_editor_username": current_user.username,
-        "file_type": file_type,
-    }
-    fake_files_db.append(new_file_metadata)
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
     
-    return new_file_metadata
-
+    return {"message": f"File {file.filename} uploaded successfully"}
 
 @app.get("/files/{file_id}/download")
 async def download_file(
-    file_id: int,
-    current_user: User = Depends(get_current_active_user)
+    file_id: str,
+    current_user: str = Depends(get_current_user)
 ):
-    """
-    Downloads a specific file by its ID.
-    """
-    metadata = next((f for f in fake_files_db if f["id"] == file_id), None)
-    if not metadata:
-        raise HTTPException(status_code=404, detail="File not found")
-
-    file_path = os.path.join(UPLOADS_DIR, metadata["name"])
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found on disk")
+    """Завантажити файл"""
+    user_dir = get_user_dir(current_user)
     
-    return FileResponse(path=file_path, filename=metadata["name"], media_type='application/octet-stream')
+    # Знайти файл за ID (спрощений підхід)
+    for file_path in user_dir.iterdir():
+        if str(hash(str(file_path))) == file_id:
+            return {"download_url": f"/static/{current_user}/{file_path.name}"}
+    
+    raise HTTPException(status_code=404, detail="File not found")
 
-
-@app.delete("/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
+@app.delete("/files/{file_id}")
 async def delete_file(
-    file_id: int,
-    current_user: User = Depends(get_current_active_user)
+    file_id: str,
+    current_user: str = Depends(get_current_user)
 ):
-    """
-    Deletes a file's metadata and the actual file from disk.
-    """
-    global fake_files_db
-    metadata_index = -1
-    for i, metadata in enumerate(fake_files_db):
-        if metadata["id"] == file_id:
-            metadata_index = i
-            break
-            
-    if metadata_index == -1:
-        raise HTTPException(status_code=404, detail="File metadata not found")
-
-    # Delete the actual file
-    metadata = fake_files_db[metadata_index]
-    file_path = os.path.join(UPLOADS_DIR, metadata["name"])
-    if os.path.exists(file_path):
-        os.remove(file_path)
-
-    # Remove metadata from our "DB"
-    fake_files_db.pop(metadata_index)
+    """Видалити файл"""
+    user_dir = get_user_dir(current_user)
     
-    return
+    for file_path in user_dir.iterdir():
+        if str(hash(str(file_path))) == file_id:
+            file_path.unlink()
+            return {"message": "File deleted successfully"}
+    
+    raise HTTPException(status_code=404, detail="File not found")
+
+@app.get("/files/{file_id}/content")
+async def get_file_content(
+    file_id: str,
+    current_user: str = Depends(get_current_user)
+):
+    """Отримати вміст файлу для перегляду (.c, .jpg згідно варіанту)"""
+    user_dir = get_user_dir(current_user)
+    
+    for file_path in user_dir.iterdir():
+        if str(hash(str(file_path))) == file_id:
+            if not is_supported_file_type(file_path.name):
+                raise HTTPException(status_code=400, detail="File type not supported for preview")
+            
+            if file_path.suffix.lower() == '.c':
+                # Текстовий файл
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    return {"content": f.read(), "type": "text"}
+            else:
+                # Зображення - повертаємо base64 або URL
+                return {"content": f"/static/{current_user}/{file_path.name}", "type": "image"}
+    
+    raise HTTPException(status_code=404, detail="File not found")
+
+@app.get("/user/info")
+async def get_user_info(current_user: str = Depends(get_current_user)):
+    """Отримати інформацію про поточного користувача"""
+    return {"username": current_user}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

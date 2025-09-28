@@ -10,7 +10,7 @@ __pycache__/
 *.sqlite3
 
 # Ignore virtual environments
-venv/
+backenv/
 
 
 # macOS system files
