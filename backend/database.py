@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Dict, Optional
 import hashlib
+from datetime import datetime
 
 class SimpleDatabase:
     def __init__(self, db_file: str = "users.json"):
@@ -11,12 +12,15 @@ class SimpleDatabase:
     def _load_users(self) -> Dict:
         if self.db_file.exists():
             with open(self.db_file, 'r') as f:
-                return json.load(f)
+                try:
+                    return json.load(f)
+                except json.JSONDecodeError:
+                    return {}
         return {}
     
     def _save_users(self):
         with open(self.db_file, 'w') as f:
-            json.dump(self.users, f, indent=2)
+            json.dump(self.users, f, indent=4)
     
     def create_user(self, username: str, password: str) -> bool:
         if username in self.users:
@@ -26,7 +30,7 @@ class SimpleDatabase:
         self.users[username] = {
             "username": username,
             "password": hashed_password,
-            "created_at": str(datetime.now())
+            "created_at": datetime.now().isoformat()
         }
         self._save_users()
         return True
