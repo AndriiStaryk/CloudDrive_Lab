@@ -7,7 +7,7 @@ __pycache__/
 .env
 
 *.bin
-*.sqlite3
+*.sqlite
 
 # Ignore virtual environments
 backenv/
@@ -32,3 +32,6 @@ build/
 
 # PyInstaller
 *.spec
+
+
+uploads/
