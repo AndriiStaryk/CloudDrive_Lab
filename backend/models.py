@@ -1,7 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
-from enum import Enum
+from typing import Optional, Union
 
 class UserCreate(BaseModel):
     username: str
@@ -19,8 +18,8 @@ class FileMetadata(BaseModel):
     id: str
     name: str
     size: int
-    created_at: datetime
-    modified_at: datetime
+    created_at: Union[datetime, str] # Allow string for ISO format from server
+    modified_at: Union[datetime, str]
     uploaded_by: str
     last_modified_by: str
     file_type: str
@@ -28,3 +27,10 @@ class FileMetadata(BaseModel):
 
 class SyncRequest(BaseModel):
     local_folder_path: str
+
+# --- New Models for rename and edit ---
+class RenameRequest(BaseModel):
+    new_name_base: str # Filename without extension
+
+class UpdateContentRequest(BaseModel):
+    content: str # Base64 encoded file content

@@ -1,7 +1,7 @@
 import os
 import shutil
 from pathlib import Path
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 import mimetypes
 from datetime import datetime, timezone
 import json
@@ -27,32 +27,100 @@ class FileManager:
             json.dump(self.metadata, f, indent=4)
 
     def _is_supported_for_preview(self, filename: str) -> bool:
+        # Added .txt to support text editing
         return filename.lower().endswith(('.c', '.jpg', '.jpeg', '.py', '.png', '.txt'))
 
-    def save_file(self, username: str, file_content: bytes, filename: str) -> bool:
+    def _get_unique_filename(self, filename: str) -> Path:
+        """Generates a unique filename path if the original already exists."""
+        file_path = self.base_dir / filename
+        if not file_path.exists():
+            return file_path
+
+        stem = file_path.stem
+        suffix = file_path.suffix
+        counter = 1
+        while True:
+            new_filename = f"{stem} ({counter}){suffix}"
+            new_file_path = self.base_dir / new_filename
+            if not new_file_path.exists():
+                return new_file_path
+            counter += 1
+
+    def save_file(self, username: str, file_content: bytes, filename: str) -> Tuple[bool, str]:
+        """Saves a file, handling name conflicts by appending (n). Returns the actual filename."""
         try:
-            file_path = self.base_dir / filename
-            with open(file_path, 'wb') as f:
+            unique_file_path = self._get_unique_filename(filename)
+            actual_filename = unique_file_path.name
+            
+            with open(unique_file_path, 'wb') as f:
                 f.write(file_content)
 
-            # Use timezone-aware UTC for all timestamps
+            now = datetime.now(timezone.utc).isoformat()
+            
+            self.metadata[actual_filename] = {
+                'uploaded_by': username,
+                'last_modified_by': username,
+                'created_at': now,
+                'modified_at': now,
+            }
+            
+            self._save_metadata()
+            return True, actual_filename
+        except Exception as e:
+            print(f"Error saving file: {e}")
+            return False, ""
+
+    def update_file_content(self, username: str, filename: str, file_content: bytes) -> bool:
+        """Updates the content of an existing file."""
+        try:
+            file_path = self.base_dir / filename
+            if not file_path.exists():
+                return False
+                
+            with open(file_path, 'wb') as f:
+                f.write(file_content)
+                
             now = datetime.now(timezone.utc).isoformat()
             if filename in self.metadata:
                 self.metadata[filename]['last_modified_by'] = username
                 self.metadata[filename]['modified_at'] = now
-            else:
-                self.metadata[filename] = {
-                    'uploaded_by': username,
-                    'last_modified_by': username,
-                    'created_at': now,
-                    'modified_at': now,
-                }
-            
-            self._save_metadata()
-            return True
-        except Exception as e:
-            print(f"Error saving file: {e}")
+                self._save_metadata()
+                return True
             return False
+        except Exception as e:
+            print(f"Error updating file content: {e}")
+            return False
+
+    def rename_file(self, old_filename: str, new_filename_base: str, username: str) -> Tuple[bool, str]:
+        """Renames a file, preserving its extension."""
+        try:
+            old_path = self.base_dir / old_filename
+            if not old_path.exists():
+                return False, "Source file not found."
+            
+            extension = old_path.suffix
+            new_filename = f"{new_filename_base}{extension}"
+            
+            if old_filename == new_filename:
+                return True, new_filename
+
+            new_path = self.base_dir / new_filename
+            if new_path.exists():
+                return False, "A file with the new name already exists."
+
+            os.rename(old_path, new_path)
+
+            if old_filename in self.metadata:
+                file_meta = self.metadata.pop(old_filename)
+                file_meta['last_modified_by'] = username
+                file_meta['modified_at'] = datetime.now(timezone.utc).isoformat()
+                self.metadata[new_filename] = file_meta
+                self._save_metadata()
+
+            return True, new_filename
+        except Exception as e:
+            print(f"Error renaming file: {e}")
+            return False, str(e)
 
     def delete_file(self, filename: str) -> bool:
         try:
@@ -90,7 +158,6 @@ class FileManager:
                 stat = file_path.stat()
                 file_meta = self.metadata.get(file_path.name, {})
                 
-                # Use creation time from file system stat as a fallback
                 created_at_utc = datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc).isoformat()
                 modified_at_utc = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
 
@@ -118,8 +185,9 @@ class FileManager:
                 if file_in_local.is_file():
                     with open(file_in_local, 'rb') as f:
                         content = f.read()
-                    self.save_file(username, content, file_in_local.name)
-                    synced_files.append(file_in_local.name)
+                    success, actual_filename = self.save_file(username, content, file_in_local.name)
+                    if success:
+                        synced_files.append(actual_filename)
             
             return {
                 "status": "success",
@@ -128,4 +196,3 @@ class FileManager:
             }
         except Exception as e:
             return {"status": "error", "message": str(e)}
-

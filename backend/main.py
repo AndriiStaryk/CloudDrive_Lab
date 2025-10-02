@@ -1,16 +1,17 @@
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Body
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from typing import List, Optional
 import jwt
+import base64
 
 # Custom modules
 from database import SimpleDatabase
 from file_manager import FileManager
-from models import UserCreate, UserLogin, Token, FileMetadata, SyncRequest
+from models import UserCreate, UserLogin, Token, FileMetadata, SyncRequest, RenameRequest, UpdateContentRequest
 
 # --- Configuration ---
 SECRET_KEY = "your-super-secret-key"
@@ -25,7 +26,7 @@ fm = FileManager()
 # --- CORS ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins for simplicity
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -99,9 +100,10 @@ async def get_files(current_user: str = Depends(get_current_user)):
 @app.post("/files/upload")
 async def upload_file(current_user: str = Depends(get_current_user), file: UploadFile = File(...)):
     contents = await file.read()
-    if not fm.save_file(current_user, contents, file.filename):
+    success, actual_filename = fm.save_file(current_user, contents, file.filename)
+    if not success:
         raise HTTPException(status_code=500, detail="Could not save file.")
-    return {"filename": file.filename, "uploader": current_user, "status": "success"}
+    return {"filename": actual_filename, "uploader": current_user, "status": "success"}
 
 @app.get("/files/download/{filename}")
 async def download_file(filename: str, current_user: str = Depends(get_current_user)):
@@ -109,6 +111,42 @@ async def download_file(filename: str, current_user: str = Depends(get_current_u
     if file_path and file_path.exists():
         return FileResponse(path=file_path, filename=filename, media_type='application/octet-stream')
     raise HTTPException(status_code=404, detail="File not found")
+
+@app.get("/files/content/{filename}")
+async def get_file_content_api(filename: str, current_user: str = Depends(get_current_user)):
+    """API endpoint for previewing file content."""
+    content_bytes = fm.get_file_content(filename)
+    if content_bytes is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    try:
+        content_text = content_bytes.decode('utf-8')
+        return JSONResponse(content={"filename": filename, "content": content_text})
+    except UnicodeDecodeError:
+        content_base64 = base64.b64encode(content_bytes).decode('utf-8')
+        return JSONResponse(content={"filename": filename, "content": content_base64, "encoding": "base64"})
+
+@app.put("/files/update/{filename}")
+async def update_file_content(filename: str, request: UpdateContentRequest, current_user: str = Depends(get_current_user)):
+    try:
+        content_bytes = base64.b64decode(request.content)
+        if fm.update_file_content(current_user, filename, content_bytes):
+            return {"status": "success", "filename": filename}
+        else:
+            raise HTTPException(status_code=404, detail="File not found or could not be updated.")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid content or error updating: {e}")
+
+@app.put("/files/rename/{old_filename}")
+async def rename_file(old_filename: str, request: RenameRequest, current_user: str = Depends(get_current_user)):
+    success, message = fm.rename_file(old_filename, request.new_name_base, current_user)
+    if not success:
+        if "already exists" in message or "not found" in message:
+            raise HTTPException(status_code=409, detail=message)
+        else:
+            raise HTTPException(status_code=500, detail=message)
+    return {"status": "success", "new_filename": message}
+
 
 @app.delete("/files/delete/{filename}")
 async def delete_file(filename: str, current_user: str = Depends(get_current_user)):
@@ -126,8 +164,6 @@ async def sync_folder(sync_request: SyncRequest, current_user: str = Depends(get
 @app.get("/user/me")
 async def read_users_me(current_user: str = Depends(get_current_user)):
     return {"username": current_user}
-
-
 
 if __name__ == "__main__":
     import uvicorn
