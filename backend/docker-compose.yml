@@ -2,6 +2,7 @@ version: '3.8'
 
 services:
   cloud-drive-api:
+    container_name: cloud-drive-api-container
     build: .
     ports:
       - "8000:8000"

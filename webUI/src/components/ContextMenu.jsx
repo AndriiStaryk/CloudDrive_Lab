@@ -13,15 +13,32 @@ export default function ContextMenu({ x, y, items, onClose }) {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [onClose]);
 
+    const handleItemClick = (item) => {
+        if (!item.disabled) {
+            item.action();
+            // CRITICAL FIX: Always close the menu after an action.
+            // This ensures it is re-rendered with fresh state next time it opens.
+            onClose();
+        }
+    };
+
     return (
         <div ref={menuRef} className="context-menu" style={{ top: y, left: x }}>
             <ul>
                 {items.map(item => (
-                    <li key={item.label} onClick={() => { item.action(); onClose(); }}>
-                        {item.label}
+                    <li 
+                        key={item.label} 
+                        className={`${item.type === 'checkbox' ? 'checkbox-item' : ''} ${item.disabled ? 'disabled' : ''}`}
+                        onClick={() => handleItemClick(item)}
+                    >
+                        {item.type === 'checkbox' && (
+                            <input type="checkbox" checked={item.checked} readOnly disabled={item.disabled} />
+                        )}
+                        <span>{item.label}</span>
                     </li>
                 ))}
             </ul>
         </div>
     );
 }
+

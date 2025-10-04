@@ -28,28 +28,23 @@ export const setAuthToken = (token) => {
 // --- Authentication ---
 export const signup = (username, password) => apiClient.post('/auth/signup', { username, password });
 
-// =================================================================
-// THIS IS THE UPDATED LOGIN FUNCTION
-// =================================================================
 export const login = (username, password) => {
-  // Manually build the URL-encoded string. This is the most robust method.
-  const body = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
-
+  // Manual string construction is the most reliable method for this content type
+  const body = `grant_type=&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&scope=&client_id=&client_secret=`;
   return apiClient.post('/auth/token', body, {
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
     },
   });
 };
-// =================================================================
-
 
 // --- File Operations ---
 export const getFiles = () => apiClient.get('/files');
 
 export const uploadFile = (file, onUploadProgress) => {
   const formData = new FormData();
-  formData.append('file', file);
+  // CRITICAL FIX: Explicitly set the filename to the base name, ignoring the folder path.
+  formData.append('file', file, file.name); 
   return apiClient.post('/files/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress,
@@ -77,7 +72,10 @@ export const renameFile = (oldFilename, newNameBase) => apiClient.put(`/files/re
 export const getFileContent = (filename) => apiClient.get(`/files/content/${filename}`);
 
 export const updateFileContent = (filename, content) => {
-  // Base64 encode the content string
-  const encodedContent = btoa(content);
+  const encodedContent = btoa(unescape(encodeURIComponent(content)));
   return apiClient.put(`/files/update/${filename}`, { content: encodedContent });
 };
+
+// Expose the apiClient instance so other parts of the app can access its defaults (like baseURL)
+export { apiClient };
+

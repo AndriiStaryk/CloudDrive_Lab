@@ -52,14 +52,34 @@ button { cursor: pointer; transition: background-color 0.2s; }
   height: 100%;
   padding: 15px;
   box-sizing: border-box;
+  transition: background-color 0.3s;
 }
+.main-window.drag-over {
+  background-color: var(--primary-active);
+  outline: 2px dashed var(--text-light);
+  outline-offset: -10px;
+}
+
 .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 10px;
 }
+.header-left {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
 .header h3 { margin: 0; }
+.header span { font-size: 9pt; color: var(--text-muted); }
+.logout-btn {
+    background-color: var(--secondary-color) !important;
+}
+.logout-btn:hover {
+    background-color: #e74c3c !important; /* Red on hover for emphasis */
+}
+
 
 /* --- Top Bar --- */
 .top-bar {
@@ -101,6 +121,9 @@ button { cursor: pointer; transition: background-color 0.2s; }
 table {
     width: 100%;
     border-collapse: collapse;
+}
+thead {
+    cursor: context-menu;
 }
 th {
     background-color: var(--bg-color);
@@ -145,8 +168,20 @@ tbody tr:hover:not(.selected) { background-color: var(--bg-light); }
   padding: 8px 20px;
   cursor: pointer;
   border-radius: 5px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
 }
-.context-menu li:hover { background-color: var(--primary-color); color: white; }
+.context-menu li:not(.disabled):hover { background-color: var(--primary-color); color: white; }
+.context-menu li.disabled {
+    color: #888;
+    cursor: not-allowed;
+}
+.context-menu li.checkbox-item input {
+    pointer-events: none; /* Let the li handle the click */
+}
+
 
 /* --- Modal --- */
 .modal-backdrop {
@@ -163,6 +198,9 @@ tbody tr:hover:not(.selected) { background-color: var(--bg-light); }
   display: flex;
   flex-direction: column;
 }
+.modal-content.sync-modal {
+  max-width: 500px;
+}
 .modal-header {
   padding: 15px 20px;
   border-bottom: 1px solid var(--border-color);
@@ -175,8 +213,22 @@ tbody tr:hover:not(.selected) { background-color: var(--bg-light); }
   overflow-y: auto;
   flex-grow: 1;
   display: flex;
+  flex-direction: column;
   justify-content: center;
   align-items: center;
+}
+.modal-options {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  width: 100%;
+  margin: 20px 0;
+}
+.modal-note {
+  font-size: 9pt;
+  color: var(--text-muted);
+  text-align: center;
+  margin-top: 10px;
 }
 .modal-body textarea {
   width: 100%;
@@ -197,3 +249,4 @@ tbody tr:hover:not(.selected) { background-color: var(--bg-light); }
   justify-content: flex-end;
   gap: 10px;
 }
+

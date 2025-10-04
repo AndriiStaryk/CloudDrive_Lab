@@ -1,19 +1,16 @@
-import React, { useRef } from 'react';
-import { UploadIcon, DownloadIcon, DeleteIcon, RefreshIcon } from '../assets/icons.jsx';
+import React from 'react';
+import { UploadIcon, DownloadIcon, DeleteIcon, RefreshIcon, SyncIcon } from '../assets/icons.jsx';
 
-export default function TopBar({ onUpload, onDelete, onDownload, onRefresh, selectedFile, activeFilter, onFilterChange }) {
-    const fileInputRef = useRef(null);
-
-    const handleUploadClick = () => {
-        fileInputRef.current.click();
-    };
-    
-    const handleFileChange = (event) => {
-        if (event.target.files.length > 0) {
-            onUpload(event.target.files);
-        }
-    };
-
+export default function TopBar({ 
+    onUploadClick, 
+    onDelete, 
+    onDownload, 
+    onRefresh, 
+    onSyncClick, 
+    selectedFile, 
+    activeFilter, 
+    onFilterChange 
+}) {
     const FilterButton = ({ filterType, label }) => (
         <button
             className={`btn-filter ${activeFilter === filterType ? 'active' : ''}`}
@@ -26,10 +23,10 @@ export default function TopBar({ onUpload, onDelete, onDownload, onRefresh, sele
     return (
         <div className="top-bar">
             <div className="action-buttons">
-                <input type="file" multiple ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileChange} />
-                <button className="btn-icon" onClick={handleUploadClick}><UploadIcon /> Upload</button>
+                <button className="btn-icon" onClick={onUploadClick}><UploadIcon /> Upload File</button>
                 <button className="btn-icon" onClick={onDownload} disabled={!selectedFile}><DownloadIcon /> Download</button>
                 <button className="btn-icon" onClick={onDelete} disabled={!selectedFile}><DeleteIcon /> Delete</button>
+                <button className="btn-icon" onClick={onSyncClick}><SyncIcon /> Sync Folder</button>
             </div>
             <div className="filter-buttons">
                 <span>Filter by:</span>
@@ -43,3 +40,4 @@ export default function TopBar({ onUpload, onDelete, onDownload, onRefresh, sele
         </div>
     );
 }
+
