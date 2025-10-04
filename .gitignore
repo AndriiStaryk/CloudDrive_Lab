@@ -11,7 +11,7 @@ __pycache__/
 
 # Ignore virtual environments
 backenv/
-
+node_modules/
 
 # macOS system files
 .DS_Store
